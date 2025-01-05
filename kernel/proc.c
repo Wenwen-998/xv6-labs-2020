@@ -34,12 +34,13 @@ procinit(void)
       // Allocate a page for the process's kernel stack.
       // Map it high in memory, followed by an invalid
       // guard page.
-      char *pa = kalloc();
+     /* char *pa = kalloc();
       if(pa == 0)
         panic("kalloc");
       uint64 va = KSTACK((int) (p - proc));
       kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
       p->kstack = va;
+      */
   }
   kvminithart();
 }
@@ -121,6 +122,15 @@ found:
     return 0;
   }
 
+  p->kama_kernelpgtbl = kama_kvminit_newpgtbl();
+  char *pa = kalloc();
+      if(pa == 0)
+        panic("kalloc");
+      uint64 va = KSTACK((int)0);
+      kvmmap(p->kama_kernelpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+      p->kstack = va;
+
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -149,6 +159,13 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+//释放进程的内核栈
+  void* kstack_pa = (void*)kvmpa(p->kama_kernelpgtbl, p->kstack);
+  kfree(kstack_pa);
+  p->kstack = 0;
+
+  kama_kvm_free_kernelpgtbl(p->kama_kernelpgtbl);
+  p->kama_kernelpgtbl = 0;
   p->state = UNUSED;
 }
 
@@ -473,8 +490,13 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        w_satp(MAKE_SATP(p->kama_kernelpgtbl));//将进程独立的内核页表放到sapt寄存器
+        sfence_vma();         //清除快表缓存，刷新TLB缓存
+
         swtch(&c->context, &p->context);
 
+        kvminithart();
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
