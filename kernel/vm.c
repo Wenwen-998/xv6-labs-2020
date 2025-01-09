@@ -6,6 +6,7 @@
 #include "defs.h"
 #include "fs.h"
 
+
 /*
  * the kernel's page table.
  */
@@ -22,7 +23,7 @@ void
 kvminit()
 {
   kernel_pagetable = kama_kvminit_newpgtbl();
- 
+  kvmmap(kernel_pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
 }
 
 // Switch h/w page table register to the kernel's page table,
@@ -354,26 +355,11 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 // Copy from user to kernel.
 // Copy len bytes to dst from virtual address srcva in a given page table.
 // Return 0 on success, -1 on error.
+
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
-  uint64 n, va0, pa0;
-
-  while(len > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > len)
-      n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
-
-    len -= n;
-    dst += n;
-    srcva = va0 + PGSIZE;
-  }
-  return 0;
+  return copyin_new(pagetable, dst, srcva, len);
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -383,40 +369,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
-  uint64 n, va0, pa0;
-  int got_null = 0;
-
-  while(got_null == 0 && max > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > max)
-      n = max;
-
-    char *p = (char *) (pa0 + (srcva - va0));
-    while(n > 0){
-      if(*p == '\0'){
-        *dst = '\0';
-        got_null = 1;
-        break;
-      } else {
-        *dst = *p;
-      }
-      --n;
-      --max;
-      p++;
-      dst++;
-    }
-
-    srcva = va0 + PGSIZE;
-  }
-  if(got_null){
-    return 0;
-  } else {
-    return -1;
-  }
+  return copyinstr_new(pagetable, dst, srcva, max);
 }
 
 int kama_pgtblprint(pagetable_t pagetable, int depth)
@@ -456,7 +409,7 @@ void kama_kvm_map_pagetable(pagetable_t pgtbl)
   kvmmap(pgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
 
   // CLINT
-  kvmmap(pgtbl, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+  //kvmmap(pgtbl, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
 
   // PLIC
   kvmmap(pgtbl, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
@@ -495,3 +448,46 @@ pagetable_t kama_kvminit_newpgtbl()
     }
     kfree((void*)pagetable);
  }
+
+//将src页表的一部分页映射关系拷贝到dst页表中。只拷贝页表项.
+//成功返回0，失败返回-1
+ int 
+ kvmcopymappings(pagetable_t src, pagetable_t dst, uint64 start, uint64 sz) 
+ {
+    pte_t* pte;
+    uint64 pa, i;
+    uint flags;
+
+    for (i = PGROUNDUP(start); i < start + sz; i += PGSIZE)
+    {
+      if ((pte = walk(src, i, 0)) == 0)
+          panic("kvmcopymappings: pte should exist");
+      if ((*pte & PTE_V) == 0)
+          panic("kvmcopymappings: page not present");
+      pa = PTE2PA(*pte);
+
+      flags = PTE_FLAGS(*pte) & ~PTE_U;
+      if (mappages(dst, i, PGSIZE, pa, flags) != 0)//实现拷贝页表项；在目标页表中create大小为PGSIZE的页表项，并建立va "i" 到 pa "pa"的映射
+          goto err;     
+    }
+    return 0;
+
+    err:
+        //解除目标页表中已经映射的页表项
+        uvmunmap(dst, PGROUNDUP(start), (i - PGROUNDUP(start)) / PGSIZE, 0);
+        return -1;
+ }
+
+//与uvmdealloc功能类似,将程序内存从oldsz缩减到newsz，但不释放实际内存
+ uint64
+kvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
+{
+  if (newsz >= oldsz)
+      return oldsz;
+  if (PGROUNDUP(newsz) < PGROUNDUP(oldsz))
+  {
+    int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+    uvmunmap(pagetable, PGROUNDUP(newsz), npages, 0);
+  }
+  return newsz;    
+}
