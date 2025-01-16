@@ -132,3 +132,15 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+void backtrace() {
+  uint64 fp = r_fp(); //获取栈帧的起始地址
+  printf("backtrace:\n");
+  //在xv6中, 使用一个页来存储栈, 如果fp不在页的有效范围内,说明遍历完了栈帧
+  while (PGROUNDDOWN(fp) != PGROUNDUP(fp)) // 当前帧指针fp是否在有效的页范围内
+  {
+    uint64 ra = *(uint64*)(fp - 8); //return 栈帧的开始地址
+    printf("%p\n", ra);
+    fp = *(uint64*)(fp - 16);
+  }
+}
