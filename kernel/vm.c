@@ -362,7 +362,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
 
-  if (uvmshouldallocate(dstva))
+  if (uvmshouldallocate(dstva))   //如果遇到没分配的虚拟地址就马上分配
       uvmlazyallocate(dstva);
 
   while(len > 0){
@@ -390,7 +390,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
   uint64 n, va0, pa0;
 
-  if (uvmshouldallocate(srcva))
+  if (uvmshouldallocate(srcva))   //如果遇到没分配的虚拟地址就马上分配
       uvmlazyallocate(srcva);
 
   while(len > 0){
