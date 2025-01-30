@@ -10,6 +10,8 @@
 #define STACK_SIZE  8192
 #define MAX_THREAD  4
 
+
+//线程切换需要保存的寄存器
 struct context {
   uint64 ra;
   uint64 sp;
